@@ -7,7 +7,8 @@
 //
 
 #import "CNPPopupController.h"
-
+#import "UIImage+Screenshot.h"
+#import "UIImage+Blur.h"
 #define CNP_SYSTEM_VERSION_LESS_THAN(v) ([[[UIDevice currentDevice] systemVersion] compare:v options:NSNumericSearch] == NSOrderedAscending)
 #define CNP_IS_IPAD   (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad)
 
@@ -20,7 +21,7 @@ static inline UIViewAnimationOptions UIViewAnimationCurveToAnimationOptions(UIVi
 
 @property (nonatomic, strong) UIWindow *applicationWindow;
 @property (nonatomic, strong) UIView *maskView;
-@property (nonatomic, strong) UIVisualEffectView *blurEffectView;
+@property (strong, nonatomic) UIImageView *backgroundView;
 @property (nonatomic, strong) UITapGestureRecognizer *backgroundTapRecognizer;
 @property (nonatomic, strong) UIView *popupView;
 @property (nonatomic, strong) NSArray <UIView *> *views;
@@ -41,26 +42,22 @@ static inline UIViewAnimationOptions UIViewAnimationCurveToAnimationOptions(UIVi
         self.popupView.backgroundColor = [UIColor whiteColor];
         self.popupView.clipsToBounds = YES;
         
+        
         self.maskView = [[UIView alloc] initWithFrame:self.applicationWindow.bounds];
+        //        self.maskView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:.1f];
         self.maskView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.7];
         self.backgroundTapRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleBackgroundTapGesture:)];
         self.backgroundTapRecognizer.delegate = self;
         [self.maskView addGestureRecognizer:self.backgroundTapRecognizer];
         
-        // Add blur effect view to maskView
-        if (!UIAccessibilityIsReduceTransparencyEnabled()) {
-            UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleLight];
-            self.blurEffectView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
-            self.blurEffectView.frame = self.maskView.bounds;
-            self.blurEffectView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-            
-            [self.maskView addSubview:self.blurEffectView];
-        }
+        self.backgroundView = [[UIImageView alloc] initWithFrame:self.applicationWindow.bounds];
+        self.backgroundView.backgroundColor = [UIColor clearColor];
+        
         
         [self.maskView addSubview:self.popupView];
         
         self.theme = [CNPPopupTheme defaultTheme];
-
+        
         [self addPopupContents];
         
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
@@ -71,7 +68,7 @@ static inline UIViewAnimationOptions UIViewAnimationCurveToAnimationOptions(UIVi
                                                  selector:@selector(orientationWillChange)
                                                      name:UIApplicationWillChangeStatusBarOrientationNotification
                                                    object:nil];
-            [[NSNotificationCenter defaultCenter] addObserver:self
+        [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(orientationChanged)
                                                      name:UIApplicationDidChangeStatusBarOrientationNotification
                                                    object:nil];
@@ -148,7 +145,7 @@ CGFloat CNP_UIInterfaceOrientationAngleOfOrientation(UIInterfaceOrientation orie
     if (self.theme.popupStyle == CNPPopupStyleActionSheet) {
         self.theme.presentationStyle = CNPPopupPresentationStyleSlideInFromBottom;
     }
-    self.blurEffectView.alpha = self.theme.blurEffectAlpha;
+    
     self.popupView.layer.cornerRadius = self.theme.popupStyle == CNPPopupStyleCentered?self.theme.cornerRadius:0;
     self.popupView.backgroundColor = self.theme.backgroundColor;
     UIColor *maskBackgroundColor;
@@ -162,7 +159,7 @@ CGFloat CNP_UIInterfaceOrientationAngleOfOrientation(UIInterfaceOrientation orie
                 maskBackgroundColor = [UIColor clearColor];
                 break;
             case CNPPopupMaskTypeDimmed:
-                maskBackgroundColor = [UIColor colorWithWhite:0.0 alpha:0.7];
+                maskBackgroundColor = [UIColor colorWithWhite:0.0 alpha:0.6];
                 break;
             default:
                 maskBackgroundColor = self.theme.customMaskColor;
@@ -228,7 +225,7 @@ CGFloat CNP_UIInterfaceOrientationAngleOfOrientation(UIInterfaceOrientation orie
     return [self calculateContentSizeThatFits:size andUpdateLayout:NO];
 }
 
-#pragma mark - Keyboard 
+#pragma mark - Keyboard
 
 - (void)keyboardWillShow:(NSNotification*)notification
 {
@@ -289,10 +286,26 @@ CGFloat CNP_UIInterfaceOrientationAngleOfOrientation(UIInterfaceOrientation orie
     [self calculateContentSizeThatFits:CGSizeMake([self popupWidth], self.maskView.bounds.size.height) andUpdateLayout:YES];
     self.popupView.center = [self originPoint];
     
+    if (self.theme.blurEffectAlpha > 0) {
+        UIImage *screenshot = [UIImage screenshot];
+        NSData *imageData = UIImageJPEGRepresentation(screenshot, .0001);
+        UIImage *blurredSnapshot = [[UIImage imageWithData:imageData] blurredImage:self.theme.blurEffectAlpha];
+        
+        self.backgroundView.image = blurredSnapshot;
+    } else {
+        self.backgroundView.image = nil;
+    }
+    
+    [self.applicationWindow addSubview:self.backgroundView];
     [self.applicationWindow addSubview:self.maskView];
+    
+    
+    self.backgroundView.alpha = 0;
     self.maskView.alpha = 0;
+    
     [UIView animateWithDuration:flag?self.theme.animationDuration:0.0 animations:^{
         self.maskView.alpha = 1.0;
+        self.backgroundView.alpha = 1;
         self.popupView.center = [self endingPoint];;
     } completion:^(BOOL finished) {
         self.popupView.userInteractionEnabled = YES;
@@ -308,9 +321,11 @@ CGFloat CNP_UIInterfaceOrientationAngleOfOrientation(UIInterfaceOrientation orie
     }
     [UIView animateWithDuration:flag?self.theme.animationDuration:0.0 animations:^{
         self.maskView.alpha = 0.0;
+        self.backgroundView.alpha = 0;
         self.popupView.center = [self dismissedPoint];;
     } completion:^(BOOL finished) {
         [self.maskView removeFromSuperview];
+        [self.backgroundView removeFromSuperview];
         if ([self.delegate respondsToSelector:@selector(popupControllerDidDismiss:)]) {
             [self.delegate popupControllerDidDismiss:self];
         }
@@ -390,7 +405,7 @@ CGFloat CNP_UIInterfaceOrientationAngleOfOrientation(UIInterfaceOrientation orie
     return width;
 }
 
-#pragma mark - UIGestureRecognizerDelegate 
+#pragma mark - UIGestureRecognizerDelegate
 
 - (void)handleBackgroundTapGesture:(id)sender {
     if (self.theme.shouldDismissOnBackgroundTouch) {
@@ -450,7 +465,7 @@ CGFloat CNP_UIInterfaceOrientationAngleOfOrientation(UIInterfaceOrientation orie
     defaultTheme.contentVerticalPadding = 16.0f;
     defaultTheme.maxPopupWidth = 300.0f;
     defaultTheme.animationDuration = 0.3f;
-    defaultTheme.blurEffectAlpha = 0.0f;
+    defaultTheme.blurEffectAlpha = 0.8f;
     return defaultTheme;
 }
 
